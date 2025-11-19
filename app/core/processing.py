@@ -16,9 +16,6 @@ from openpyxl.utils import get_column_letter
 from .config import settings
 from .gcp import authenticate_and_open_sheet
 
-# ตั้งค่า API key ของ Gemini
-genai.configure(api_key=settings.google_api_key)
-
 DEFAULT_SHEET_ID = settings.default_sheet_id
 
 COMPANY_NAME_ROW = 1
@@ -520,8 +517,11 @@ def process_file(file_path: str) -> Dict[str, Any]:
 
 def process_files(
     file_paths: List[str],
-    sheet_id: str | None = DEFAULT_SHEET_ID,
+    sheet_id: str | None,
+    google_api_key: str,
+    gcp_service_account_json: str,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    genai.configure(api_key=google_api_key)
     data_by_index: Dict[int, Dict[str, Any]] = {}
     errors: List[str] = []
     total_files = len(file_paths)
@@ -541,34 +541,43 @@ def process_files(
 
     results: List[Dict[str, Any]] = []
     if data_by_index:
-        ws = authenticate_and_open_sheet(extract_sheet_id_from_url(sheet_id) or DEFAULT_SHEET_ID)
-        initial_sheet_values = ws.get_all_values()
+        target_sheet_id = extract_sheet_id_from_url(sheet_id) or DEFAULT_SHEET_ID
+        ws = None
+        initial_sheet_values: List[List[str]] = []
+
+        try:
+            ws = authenticate_and_open_sheet(target_sheet_id, gcp_service_account_json)
+            initial_sheet_values = ws.get_all_values()
+        except Exception as exc:
+            errors.append(f"Google Sheet update skipped: {exc}")
 
         live_existing_products: List[Dict[str, Any]] = []
-        for row_idx, row in enumerate(initial_sheet_values[HEADER_ROW:], start=HEADER_ROW + 1):
-            if (
-                len(row) >= ITEM_MASTER_LIST_COL
-                and row[ITEM_MASTER_LIST_COL - 1].strip()
-                and row[ITEM_MASTER_LIST_COL - 1].strip() not in SUMMARY_LABELS
-            ):
-                live_existing_products.append({"name": row[ITEM_MASTER_LIST_COL - 1].strip(), "row": row_idx})
-
         live_existing_suppliers: Dict[str, int] = {}
-        header_row_values = initial_sheet_values[COMPANY_NAME_ROW - 1] if initial_sheet_values else []
-        for col_idx in range(ITEM_MASTER_LIST_COL + 1, len(header_row_values) + 1, COLUMNS_PER_SUPPLIER):
-            supplier_name = header_row_values[col_idx - 1].strip() if (col_idx - 1) < len(header_row_values) else ""
-            if supplier_name:
-                live_existing_suppliers[supplier_name] = col_idx
+
+        if ws and initial_sheet_values:
+            for row_idx, row in enumerate(initial_sheet_values[HEADER_ROW:], start=HEADER_ROW + 1):
+                if (
+                    len(row) >= ITEM_MASTER_LIST_COL
+                    and row[ITEM_MASTER_LIST_COL - 1].strip()
+                    and row[ITEM_MASTER_LIST_COL - 1].strip() not in SUMMARY_LABELS
+                ):
+                    live_existing_products.append({"name": row[ITEM_MASTER_LIST_COL - 1].strip(), "row": row_idx})
+
+            header_row_values = initial_sheet_values[COMPANY_NAME_ROW - 1] if initial_sheet_values else []
+            for col_idx in range(ITEM_MASTER_LIST_COL + 1, len(header_row_values) + 1, COLUMNS_PER_SUPPLIER):
+                supplier_name = header_row_values[col_idx - 1].strip() if (col_idx - 1) < len(header_row_values) else ""
+                if supplier_name:
+                    live_existing_suppliers[supplier_name] = col_idx
 
         for i, idx in enumerate(sorted(data_by_index.keys())):
             r = data_by_index[idx]
             if r and "data" in r and r["data"]:
-                # ตาม flow เดิม: อัปเดต sheet ทีละไฟล์
-                live_existing_products, live_existing_suppliers = update_google_sheet_for_single_file(
-                    ws, r["data"], live_existing_products, live_existing_suppliers
-                )
+                if ws:
+                    live_existing_products, live_existing_suppliers = update_google_sheet_for_single_file(
+                        ws, r["data"], live_existing_products, live_existing_suppliers
+                    )
+                    time.sleep(0.5)
                 results.append(r["data"])
-                time.sleep(0.5)  # คง delay 0.5s เดิมไว้
 
     return results, errors
 
@@ -833,53 +842,6 @@ Review the extracted products one last time and verify:
 4. Ensure NO products are missing - every line item with a price must be extracted
 5. Confirm all dimensions and specifications are preserved correctly
 6. Verify all decimal values (quantities and prices) maintain their full precision
-"""
-
-validation_prompt = """
-You are a data validation expert specializing in Thai construction quotations.
-I've extracted product data from a document, but there may be missing products or hierarchical relationships.
-
-## CRITICAL: COMPLETE DATA CHECK
-Your primary task is to ensure ALL products are correctly extracted with their hierarchical structure:
-1. Check that all products visible in the document have been extracted
-2. Ensure parent-child relationships and category groupings are preserved
-3. Verify that all products have complete descriptions including their category name
-4. Make sure no products are missing dimensions or specifications
-
-## CRITICAL: PRESERVE PRODUCT HIERARCHY
-Thai construction quotations often organize products hierarchically by categories:
-- Category names with descriptive details
-- Materials and specifications
-- Dimensions
-
-Each product must include its complete hierarchy:
-"[Category Name] - [Material] - [Type] - [Dimensions]"
-
-Examples (DO NOT add data from the attached Example in the prompt): 
-- "งานบันไดกระจก งานพื้นตก - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - กระจกเทมเปอร์ใส หนา 10 มม. ขนาด 4.672×0.97 ม."
-- "งานพื้นตก (ชั้นลอย) - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - เทมเปอร์ใส หนา 10 มม. ขนาด 3.565×0.97 ม."
-
-## CRITICAL: DECIMAL NUMBER ACCURACY
-Pay special attention to:
-1. Quantities with decimals (extract full precision)
-2. Dimensions with decimals (preserve exact measurements)
-3. Prices with decimals (maintain exact values)
-
-## CRITICAL: CLEAN PRODUCT DESCRIPTIONS
-1. REMOVE any leading numbers (1., 2., 3., etc.) from product descriptions
-2. Ensure NO product descriptions begin with numbering
-3. Maintain all other hierarchical information and details
-
-Review the data carefully and FIX these issues:
-1. ADD any missing products that should be extracted from the source document
-2. FIX product names to include complete hierarchical information WITHOUT leading numbers
-3. ENSURE all dimensions and specifications are preserved with full decimal precision
-4. VERIFY every product has the correct quantity, unit, price and total with full decimal precision
-
-Original extraction:
-{extracted_json}
-
-Return ONLY a valid JSON object with no explanations.
 """
 
 matching_prompt = """
