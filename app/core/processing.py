@@ -1,4 +1,6 @@
+# app/core/processing.py
 from __future__ import annotations
+
 import concurrent.futures
 import json
 import mimetypes
@@ -7,17 +9,21 @@ import re
 import tempfile
 import time
 from typing import Any, Dict, List, Tuple
+
 import google.generativeai as genai
 from openpyxl.utils import get_column_letter
+
 from .config import settings
 from .gcp import authenticate_and_open_sheet
 
 DEFAULT_SHEET_ID = settings.default_sheet_id
+
 COMPANY_NAME_ROW = 1
 CONTACT_INFO_ROW = 2
 HEADER_ROW = 3
 ITEM_MASTER_LIST_COL = 2
 COLUMNS_PER_SUPPLIER = 4
+
 SUMMARY_LABELS = [
     "รวมเป็นเงิน",
     "ภาษีมูลค่าเพิ่ม 7%",
@@ -27,6 +33,7 @@ SUMMARY_LABELS = [
     "การชำระเงิน",
     "อื่น ๆ",
 ]
+
 SAFETY_SETTINGS = {
     "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
     "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
@@ -34,15 +41,15 @@ SAFETY_SETTINGS = {
     "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
 }
 
+
 def extract_sheet_id_from_url(url: str | None) -> str | None:
     if not url:
         return None
     if "/" not in url and " " not in url and len(url) > 20:
         return url
     m = re.search(r"spreadsheets/d/([a-zA-Z0-9-_]+)", url)
-    if m:
-        return m.group(1)
-    return None
+    return m.group(1) if m else None
+
 
 def extract_json_from_text(text: str | None) -> Dict[str, Any] | None:
     if not text:
@@ -53,17 +60,18 @@ def extract_json_from_text(text: str | None) -> Dict[str, Any] | None:
     else:
         start = text.find("{")
         end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            candidates = [text[start:end]]
-        else:
-            candidates = []
+        candidates = [text[start:end]] if start >= 0 and end > start else []
 
     for cand in candidates:
         json_str = cand
         cleaned_json = re.sub(r",\s*}", "}", json_str)
         cleaned_json = re.sub(r",\s*]", "]", cleaned_json)
-        return json.loads(cleaned_json)
+        try:
+            return json.loads(cleaned_json)
+        except json.JSONDecodeError:
+            continue
     return None
+
 
 def extract_contact_info(text: str | None) -> str:
     if not text:
@@ -87,10 +95,12 @@ def extract_contact_info(text: str | None) -> str:
         contact_parts.append(f"Phone: {', '.join(phones)}")
     return ", ".join(contact_parts)
 
+
 def clean_product_name(name: str | None) -> str:
     if not name:
         return "Unknown Product"
     return re.sub(r"^\s*\d+[\.\)\-]\s*", "", name.strip())
+
 
 def _to_number_or_default(val: Any, default: float) -> float:
     s = str(val)
@@ -98,6 +108,7 @@ def _to_number_or_default(val: Any, default: float) -> float:
     if re.fullmatch(r"-?\d+(\.\d+)?", s2):
         return float(s2)
     return default
+
 
 def validate_json_data(json_data: Dict[str, Any] | None) -> Dict[str, Any]:
     if not json_data:
@@ -144,7 +155,7 @@ def validate_json_data(json_data: Dict[str, Any] | None) -> Dict[str, Any]:
             product["quantity"] = 1
         product["unit"] = product.get("unit") or "ชิ้น"
         product["pricePerUnit"] = _to_number_or_default(product.get("pricePerUnit", 0), 0)
-        provided_total = _to_number_or_default(product.get("totalPrice", None), None)
+        provided_total = _to_number_or_default(product.get("totalPrice", None), None)  # type: ignore[arg-type]
         if provided_total is None:
             product["totalPrice"] = round(product["quantity"] * product["pricePerUnit"], 2)
         else:
@@ -172,6 +183,7 @@ def validate_json_data(json_data: Dict[str, Any] | None) -> Dict[str, Any]:
 
     return json_data
 
+
 def extract_product_code(name: str | None) -> str | None:
     if not name:
         return None
@@ -183,6 +195,7 @@ def extract_product_code(name: str | None) -> str | None:
         return match.group(1)
     return None
 
+
 def match_products_with_gemini(
     target_products: List[Dict[str, Any]],
     reference_products: List[Dict[str, Any]],
@@ -192,10 +205,18 @@ def match_products_with_gemini(
     if not reference_products:
         return {"matchedItems": [], "uniqueItems": target_products}
 
-    match_prompt_formatted = matching_prompt.format(
-        target_products=json.dumps(target_products, ensure_ascii=False),
-        reference_products=json.dumps(reference_products, ensure_ascii=False),
-    )
+    try:
+        match_prompt_formatted = matching_prompt.format(
+            target_products=json.dumps(target_products, ensure_ascii=False),
+            reference_products=json.dumps(reference_products, ensure_ascii=False),
+        )
+    except KeyError:
+        # กรณี prompt template ผิด – fallback ให้ยังวิ่งต่อ
+        match_prompt_formatted = matching_prompt.replace("{matchedItems}", "").replace("{uniqueItems}", "")
+        match_prompt_formatted = match_prompt_formatted.format(
+            target_products=json.dumps(target_products, ensure_ascii=False),
+            reference_products=json.dumps(reference_products, ensure_ascii=False),
+        )
 
     model = genai.GenerativeModel(
         model_name="gemini-2.5-pro",
@@ -210,9 +231,10 @@ def match_products_with_gemini(
         start = match_text.find("{")
         end = match_text.rfind("}") + 1
         if start >= 0 and end > start:
-            match_data = json.loads(match_text[start:end])
-        else:
-            match_data = None
+            try:
+                match_data = json.loads(match_text[start:end])
+            except Exception:
+                match_data = None
 
     if not match_data or not isinstance(match_data, dict):
         return {"matchedItems": [], "uniqueItems": target_products}
@@ -221,6 +243,7 @@ def match_products_with_gemini(
     if "uniqueItems" not in match_data or not isinstance(match_data["uniqueItems"], list):
         match_data["uniqueItems"] = target_products
     return match_data
+
 
 def _last_non_empty_col_in_top_rows(ws) -> int:
     vals = ws.get_all_values()
@@ -231,6 +254,7 @@ def _last_non_empty_col_in_top_rows(ws) -> int:
                 last = max(last, i)
     return last
 
+
 def find_next_available_column(ws) -> int:
     start_col = ITEM_MASTER_LIST_COL + 1
     last_used = _last_non_empty_col_in_top_rows(ws)
@@ -240,6 +264,7 @@ def find_next_available_column(ws) -> int:
     groups_used = (offset + COLUMNS_PER_SUPPLIER - 1) // COLUMNS_PER_SUPPLIER
     return start_col + groups_used * COLUMNS_PER_SUPPLIER
 
+
 def update_google_sheet_for_single_file(
     ws,
     data: Dict[str, Any],
@@ -247,6 +272,7 @@ def update_google_sheet_for_single_file(
     existing_suppliers: Dict[str, int],
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     start_row = HEADER_ROW + 1
+
     summary_row_map: Dict[str, int] = {}
     first_summary_row = -1
     for p in existing_products:
@@ -414,6 +440,7 @@ def update_google_sheet_for_single_file(
 
     return existing_products, existing_suppliers
 
+
 def get_file_type(file_path: str) -> str:
     mime_type, _ = mimetypes.guess_type(file_path)
     if mime_type:
@@ -428,6 +455,7 @@ def get_file_type(file_path: str) -> str:
         return "pdf"
     return "unknown"
 
+
 def _wait_for_file_active(uploaded_file, timeout: int = 180, poll: float = 1.0):
     start = time.time()
     name = getattr(uploaded_file, "name", None)
@@ -440,6 +468,7 @@ def _wait_for_file_active(uploaded_file, timeout: int = 180, poll: float = 1.0):
             return f2
         time.sleep(poll)
     return uploaded_file
+
 
 def process_file(file_path: str) -> Dict[str, Any]:
     file_name = os.path.basename(file_path)
@@ -475,6 +504,7 @@ def process_file(file_path: str) -> Dict[str, Any]:
         d = extract_json_from_text(getattr(resp_pro, "text", "") or "")
 
     d = validate_json_data(d) if d else None
+
     result = {"file_name": file_name, "data": d}
 
     if tmp_file_path:
@@ -484,19 +514,14 @@ def process_file(file_path: str) -> Dict[str, Any]:
 
     return result
 
+
 def process_files(
     file_paths: List[str],
     sheet_id: str | None,
     google_api_key: str,
     gcp_service_account_json: str,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-<<<<<<< HEAD
-    
     genai.configure(api_key=google_api_key)
-
-=======
-    genai.configure(api_key=google_api_key)
->>>>>>> 759411f8df63217551d651388c87e0550fd3b293
     data_by_index: Dict[int, Dict[str, Any]] = {}
     errors: List[str] = []
     total_files = len(file_paths)
@@ -508,8 +533,11 @@ def process_files(
         future_to_index = {executor.submit(process_file, path): idx for idx, path in enumerate(file_paths)}
         for future in concurrent.futures.as_completed(future_to_index):
             idx = future_to_index[future]
-            result = future.result()
-            data_by_index[idx] = result
+            try:
+                result = future.result()
+                data_by_index[idx] = result
+            except Exception as exc:
+                errors.append(f"Failed to process file index {idx}: {exc!r}")
 
     results: List[Dict[str, Any]] = []
     if data_by_index:
@@ -536,11 +564,12 @@ def process_files(
         for i, idx in enumerate(sorted(data_by_index.keys())):
             r = data_by_index[idx]
             if r and "data" in r and r["data"]:
+                # ตาม flow เดิม: อัปเดต sheet ทีละไฟล์
                 live_existing_products, live_existing_suppliers = update_google_sheet_for_single_file(
                     ws, r["data"], live_existing_products, live_existing_suppliers
                 )
                 results.append(r["data"])
-                time.sleep(0.5)
+                time.sleep(0.5)  # คง delay 0.5s เดิมไว้
 
     return results, errors
 
@@ -625,7 +654,6 @@ You must return ONLY this JSON structure:
 ## Field Extraction Guidelines
 
 ### name (Product Description)
-* CRITICAL: PRESERVE PRODUCT CODES: If a line starts with a code (e.g., "D6", "W1", "W8.2", "SHR1002831P"), you MUST include this code at the beginning of the extracted 'name'. Do NOT confuse these codes with simple list numbering (like 1., 2., 3.).
 * CRITICAL: Include ALL hierarchical information in each product name:
   - Category names/headings (e.g., "งานบันไดกระจก งานพื้นตก")
   - Sub-category information (e.g., "เหล็กตัวซีชุบสังกะสี")
@@ -748,10 +776,10 @@ You must return ONLY this JSON structure:
 |------|---------|----------------|------|------|--------------|------------|
 | 1    |         | พื้นไม้ไวนิลลายไม้ปลา 4.5 มม. LKT 4.5 mm x 0.3 mm สีฟ้าเซอร์คูลี (1 กล่อง บรรจุ 18 แผ่น หรือ 1.3 ตร.ม) | ตร.ม. | 1.30 | 680.00 | 884.00 |
 
+
 ## Field Extraction Guidelines
 
 ### name (Product Description)
-* CRITICAL: PRESERVE PRODUCT CODES: If a line starts with a code (e.g., "D6", "W1", "W8.2", "SHR1002831P"), you MUST include this code at the beginning of the extracted 'name'. Do NOT confuse these codes with simple list numbering (like 1., 2., 3.).
 * CRITICAL: Include ALL hierarchical information in each product name:
   - Category names/headings (e.g., "งานบันไดกระจก งานพื้นตก")
   - Sub-category information (e.g., "เหล็กตัวซีชุบสังกะสี")
@@ -807,6 +835,53 @@ Review the extracted products one last time and verify:
 6. Verify all decimal values (quantities and prices) maintain their full precision
 """
 
+validation_prompt = """
+You are a data validation expert specializing in Thai construction quotations.
+I've extracted product data from a document, but there may be missing products or hierarchical relationships.
+
+## CRITICAL: COMPLETE DATA CHECK
+Your primary task is to ensure ALL products are correctly extracted with their hierarchical structure:
+1. Check that all products visible in the document have been extracted
+2. Ensure parent-child relationships and category groupings are preserved
+3. Verify that all products have complete descriptions including their category name
+4. Make sure no products are missing dimensions or specifications
+
+## CRITICAL: PRESERVE PRODUCT HIERARCHY
+Thai construction quotations often organize products hierarchically by categories:
+- Category names with descriptive details
+- Materials and specifications
+- Dimensions
+
+Each product must include its complete hierarchy:
+"[Category Name] - [Material] - [Type] - [Dimensions]"
+
+Examples (DO NOT add data from the attached Example in the prompt): 
+- "งานบันไดกระจก งานพื้นตก - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - กระจกเทมเปอร์ใส หนา 10 มม. ขนาด 4.672×0.97 ม."
+- "งานพื้นตก (ชั้นลอย) - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - เทมเปอร์ใส หนา 10 มม. ขนาด 3.565×0.97 ม."
+
+## CRITICAL: DECIMAL NUMBER ACCURACY
+Pay special attention to:
+1. Quantities with decimals (extract full precision)
+2. Dimensions with decimals (preserve exact measurements)
+3. Prices with decimals (maintain exact values)
+
+## CRITICAL: CLEAN PRODUCT DESCRIPTIONS
+1. REMOVE any leading numbers (1., 2., 3., etc.) from product descriptions
+2. Ensure NO product descriptions begin with numbering
+3. Maintain all other hierarchical information and details
+
+Review the data carefully and FIX these issues:
+1. ADD any missing products that should be extracted from the source document
+2. FIX product names to include complete hierarchical information WITHOUT leading numbers
+3. ENSURE all dimensions and specifications are preserved with full decimal precision
+4. VERIFY every product has the correct quantity, unit, price and total with full decimal precision
+
+Original extraction:
+{extracted_json}
+
+Return ONLY a valid JSON object with no explanations.
+"""
+
 matching_prompt = """
 You are a meticulous data architect specializing in product ontology for construction and home appliance materials. Your primary mission is to analyze product lists from different suppliers, establish a single "canonical" master product name for each item, and then map all supplier variations to that canonical name.
 Your logic must be hierarchical and rule-based. Follow this algorithm precisely.
@@ -818,7 +893,7 @@ The "Canonical Name" is the single source of truth for a product. You must const
 
 -   **`[Group]`**: The project phase or room size (e.g., "1BR+2BR(57-70sqm.)", "2BR (90sqm.)"). This is the **highest-priority** matching key.
 -   **`[Normalized Product Type]`**: The generic category of the product (e.g., "Hood", "Induction Hob", "Sink"). You must deduce this from various descriptions.
--   **`[Primary Model/Identifier]`**: The most specific model number available (e.g., "EL 60", "MWE 255 FI"). If none exists for construction assemblies, use key specs instead in the canonical name.
+-   **`[Primary Model/Identifier]`**: The most specific model number available (e.g., "EL 60", "MWE 255 FI").
 
 ### **Mandatory 4-Step Matching Algorithm**
 
@@ -828,10 +903,9 @@ For every product you process, you must follow these steps in order:
 -   This is the most critical step. Products can **ONLY** be considered a match if they belong to the **exact same `[Group]`**.
 -   Example: A "Hood" from "1BR+2BR(57-70sqm.)" can **NEVER** match a "Hood" from "2BR (90sqm.)". They are distinct line items.
 -   Recognize semantic equivalents for groups, e.g., "1 BEDROOM" is the same as "1BR+2BR(57-70sqm.)".
--   Construction override: If the so-called "group" looks like a location/position (e.g., ตำแหน่ง, ชั้นลอย, ระเบียง, ห้องนอน, UNIT, พื้นที่, บริเวณ), do not use it as a strict gate. In that case, proceed with spec-based matching (see Construction Rules below).
 
 #### **Step 2: Product Type Normalization & Keyword Mapping**
--   After filtering by group (or after applying the construction override), identify the core product type. Normalize supplier descriptions into one standard type.
+-   After filtering by group, identify the core product type. You must normalize different supplier descriptions into one standard type.
 -   Use this keyword map as your guide:
     -   **"Hood"**: `Slimline Hood`, `BI telescopic hood`, `HOOD PIAVE 60 XS`
     -   **"Induction Hob"**: `Induction Hob`, `Hob Electric`, `HOB INDUCTION`
@@ -840,8 +914,8 @@ For every product you process, you must follow these steps in order:
     -   **"Tap"**: `Sink Single Tap`, `Tap`, `TAP LANNAR`
 
 #### **Step 3: Specification & Model Analysis**
--   Once Group and Normalized Type match (or construction override applies), use model/specs (Model, Description) to confirm the match and to create the canonical name.
--   The model number itself does not have to be identical between suppliers if Group and Normalized Type are a clear match. For construction assemblies without models, use key specs (material/glass type, thickness, normalized dimensions).
+-   Once Group and Normalized Type match, use the model number and other specifications (`Model`, `Description` columns) to create the full canonical name and to confirm the match.
+-   The model number itself does not have to be identical between suppliers if the Group and Normalized Type are a clear match. The model number's purpose is to create the *unique canonical name* for that row.
 
 #### **Step 4: Construct Final Output**
 -   Based on the matches found, generate the final JSON.
@@ -852,32 +926,6 @@ For every product you process, you must follow these steps in order:
 2.  **Type over Model:** A strong match on `Group` + `Normalized Product Type` is more important than a weak match on `Model` number.
 3.  **One-to-One Mapping:** A reference item (a canonical name you create) can only be matched once per supplier list.
 4.  **No Imagination:** Only use information explicitly present in the data. If you cannot confidently normalize a product type, classify it as unique.
-
-### **Construction Rules: Thai guardrails/balustrades/glass assemblies**
-
-Apply these when items are construction assemblies (e.g., ราวกันตก/กันตก/บานกระจก/โครงเหล็ก):
-
-- Ignore location/position tokens for grouping: `ตำแหน่ง`, `ชั้นลอย`, `ระเบียง`, `ห้องนอน`, `UNIT`, `บริเวณ`, `โซน`, `ชั้น`. These must NOT prevent a match.
-- Normalize synonyms:
-  - Guardrail/Balustrade: `ราวกันตก`, `กันตก`, `ราวกันตกฝังปูน`, `Balustrade`, `Guardrail`
-  - Glass: `กระจกใส`, `ใส`, `Clear`
-  - Tempered: `เทมเปอร์`, `Tempered`, `Toughened`
-  - Channel/Profile: `รางเหล็ก U`, `U-Channel`, `U Channel`
-- Thickness equivalence: `10 mm` == `10 มม.` == `หนา 10 มม.`
-- Dimension normalization:
-  - Convert units and format to meters: `693x970 mm` -> `0.693x0.970 m`; `69 cm x 97 cm` -> `0.69x0.97 m`
-  - Recognize separators `x`, `×`, `X`, and optional spaces.
-  - Tolerance: consider two dimensions equal if each side differs by ≤ 0.05 m (5 cm) OR by ≤ 2% relative error.
-- Ignore non-differentiating notes like adhesives/sealants (`ยาแนว`, `Silicone`) and parentheticals like `(ไม่คิดขอบกันตก)` unless they are the sole differentiator.
-- Matching decision for construction assemblies:
-  - If Normalized Type matches (guardrail/balustrade), thickness matches, and normalized dimensions are within tolerance, treat as the same item even if locations differ.
-- Canonical naming for construction assemblies (when no model):
-  - Use: `[Normalized Product Type] - [Key Spec: Tempered/Clear/Thickness] - [Normalized Dimensions in m]` and append profile if available, e.g. `- U-Channel`.
-
-Example that MUST match:
-- A: "งานราวกันตกฝังปูน ตำแหน่ง ชั้นลอย - ... - กระจก Clear Tempered 10 mm., ... ขนาด 693x970 mm"
-- B: "ราวกันตก ระเบียงห้องนอน UNIT 1 - รางเหล็ก U ... - ใส เทมเปอร์ 10 มม. ขนาด 0.69 x 0.97 ม."
-- Both normalize to the same construction assembly and should be matched.
 
 ### **Walkthrough Example: Matching "Hoods"**
 
@@ -925,10 +973,6 @@ All three products are mapped to the canonical name `1BR+2BR(57-70sqm.) - Hood -
     }}
   ]
 }}
-
-Additional output constraints:
-- For each object in `matchedItems`, the `name` MUST be an exact string taken from one of `reference_products[].name`.
-- For each object in `uniqueItems`, the `name` MUST be the full descriptive name taken from the target product that could not be matched.
 
 ## Target Products:
 {target_products}
