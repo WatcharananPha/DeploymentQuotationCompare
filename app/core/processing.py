@@ -836,53 +836,6 @@ Review the extracted products one last time and verify:
 6. Verify all decimal values (quantities and prices) maintain their full precision
 """
 
-validation_prompt = """
-You are a data validation expert specializing in Thai construction quotations.
-I've extracted product data from a document, but there may be missing products or hierarchical relationships.
-
-## CRITICAL: COMPLETE DATA CHECK
-Your primary task is to ensure ALL products are correctly extracted with their hierarchical structure:
-1. Check that all products visible in the document have been extracted
-2. Ensure parent-child relationships and category groupings are preserved
-3. Verify that all products have complete descriptions including their category name
-4. Make sure no products are missing dimensions or specifications
-
-## CRITICAL: PRESERVE PRODUCT HIERARCHY
-Thai construction quotations often organize products hierarchically by categories:
-- Category names with descriptive details
-- Materials and specifications
-- Dimensions
-
-Each product must include its complete hierarchy:
-"[Category Name] - [Material] - [Type] - [Dimensions]"
-
-Examples (DO NOT add data from the attached Example in the prompt): 
-- "งานบันไดกระจก งานพื้นตก - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - กระจกเทมเปอร์ใส หนา 10 มม. ขนาด 4.672×0.97 ม."
-- "งานพื้นตก (ชั้นลอย) - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - เทมเปอร์ใส หนา 10 มม. ขนาด 3.565×0.97 ม."
-
-## CRITICAL: DECIMAL NUMBER ACCURACY
-Pay special attention to:
-1. Quantities with decimals (extract full precision)
-2. Dimensions with decimals (preserve exact measurements)
-3. Prices with decimals (maintain exact values)
-
-## CRITICAL: CLEAN PRODUCT DESCRIPTIONS
-1. REMOVE any leading numbers (1., 2., 3., etc.) from product descriptions
-2. Ensure NO product descriptions begin with numbering
-3. Maintain all other hierarchical information and details
-
-Review the data carefully and FIX these issues:
-1. ADD any missing products that should be extracted from the source document
-2. FIX product names to include complete hierarchical information WITHOUT leading numbers
-3. ENSURE all dimensions and specifications are preserved with full decimal precision
-4. VERIFY every product has the correct quantity, unit, price and total with full decimal precision
-
-Original extraction:
-{extracted_json}
-
-Return ONLY a valid JSON object with no explanations.
-"""
-
 matching_prompt = """
 You are a meticulous data architect specializing in product ontology for construction and home appliance materials. Your primary mission is to analyze product lists from different suppliers, establish a single "canonical" master product name for each item, and then map all supplier variations to that canonical name.
 Your logic must be hierarchical and rule-based. Follow this algorithm precisely.

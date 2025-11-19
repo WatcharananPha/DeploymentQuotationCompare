@@ -54,11 +54,15 @@ const App: React.FC = () => {
 
   const handleAddFiles = (fileList: FileList | null) => {
     if (!fileList) return;
-    const allowed = ["application/pdf", "image/jpeg", "image/png"];
+    const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
+    const allowedExts = [".pdf", ".jpg", ".jpeg", ".png"];
     const next: File[] = [];
-    Array.from(fileList).forEach((f) => {
-      if (allowed.includes(f.type)) {
-        next.push(f);
+    Array.from(fileList).forEach((file) => {
+      const lowerName = file.name.toLowerCase();
+      const typeOk = allowedTypes.has(file.type);
+      const extOk = allowedExts.some((ext) => lowerName.endsWith(ext));
+      if (typeOk || extOk) {
+        next.push(file);
       }
     });
     if (next.length) setFiles((prev) => [...prev, ...next]);
