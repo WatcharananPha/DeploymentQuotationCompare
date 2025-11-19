@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 type View = "dashboard" | "processing" | "success" | "error";
 
@@ -27,6 +27,20 @@ const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState("");
   const [lastSheetId, setLastSheetId] = useState<string | null>(null);
   const [resultsCount, setResultsCount] = useState(0);
+  const [googleApiKey, setGoogleApiKey] = useState("");
+  const [serviceAccountJson, setServiceAccountJson] = useState("");
+  const [credentialsStatus, setCredentialsStatus] = useState("");
+
+  useEffect(() => {
+    const storedApiKey = localStorage.getItem("googleApiKey");
+    const storedServiceJson = localStorage.getItem("serviceAccountJson");
+    if (storedApiKey) setGoogleApiKey(storedApiKey);
+    if (storedServiceJson) setServiceAccountJson(storedServiceJson);
+  }, []);
+
+  useEffect(() => {
+    setCredentialsStatus("");
+  }, [googleApiKey, serviceAccountJson]);
 
   const totalSize = useMemo(
     () => files.reduce((acc, f) => acc + f.size, 0),
@@ -40,11 +54,15 @@ const App: React.FC = () => {
 
   const handleAddFiles = (fileList: FileList | null) => {
     if (!fileList) return;
-    const allowed = ["application/pdf", "image/jpeg", "image/png"];
+    const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
+    const allowedExts = [".pdf", ".jpg", ".jpeg", ".png"];
     const next: File[] = [];
-    Array.from(fileList).forEach((f) => {
-      if (allowed.includes(f.type)) {
-        next.push(f);
+    Array.from(fileList).forEach((file) => {
+      const lowerName = file.name.toLowerCase();
+      const typeOk = allowedTypes.has(file.type);
+      const extOk = allowedExts.some((ext) => lowerName.endsWith(ext));
+      if (typeOk || extOk) {
+        next.push(file);
       }
     });
     if (next.length) setFiles((prev) => [...prev, ...next]);
@@ -54,8 +72,19 @@ const App: React.FC = () => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleSaveCredentials = () => {
+    localStorage.setItem("googleApiKey", googleApiKey);
+    localStorage.setItem("serviceAccountJson", serviceAccountJson);
+    setCredentialsStatus("Saved credentials");
+  };
+
   const handleProcess = async () => {
     if (!files.length) return;
+    if (!googleApiKey.trim() || !serviceAccountJson.trim()) {
+      setErrorMessage("Please enter Google API Key and Service Account JSON before processing.");
+      setView("error");
+      return;
+    }
     setView("processing");
     setErrorMessage("");
 
@@ -63,6 +92,8 @@ const App: React.FC = () => {
     formData.append("sheet_url", sheetLink || "");
     // ถ้า backend ต้องการ field อื่น (เช่น output_format) ก็ append เพิ่มตรงนี้ได้
     formData.append("output_format", outputFormat);
+    formData.append("google_api_key", googleApiKey.trim());
+    formData.append("gcp_service_account_json", serviceAccountJson.trim());
 
     files.forEach((f) => formData.append("files", f));
 
@@ -139,6 +170,47 @@ const App: React.FC = () => {
 
                   {/* Sheet link */}
                   <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5 space-y-4">
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium text-slate-700">API Credentials</div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            ใส่ Google API Key และ Service Account JSON เพื่อเชื่อมต่อ Gemini และ Google Sheet
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSaveCredentials}
+                          className="text-xs font-medium text-blue-700 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50"
+                        >
+                          Save
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">Google API Key</label>
+                        <input
+                          type="text"
+                          value={googleApiKey}
+                          onChange={(e) => setGoogleApiKey(e.target.value)}
+                          placeholder="AIza..."
+                          className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">GCP Service Account JSON</label>
+                        <textarea
+                          value={serviceAccountJson}
+                          onChange={(e) => setServiceAccountJson(e.target.value)}
+                          placeholder={'{ "type": "service_account", ... }'}
+                          rows={6}
+                          className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      {credentialsStatus && (
+                        <div className="text-xs text-emerald-600">{credentialsStatus}</div>
+                      )}
+                    </div>
+
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">
                         Google Sheet Link / ID
