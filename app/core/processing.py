@@ -16,9 +16,6 @@ from openpyxl.utils import get_column_letter
 from .config import settings
 from .gcp import authenticate_and_open_sheet
 
-# ตั้งค่า API key ของ Gemini
-genai.configure(api_key=settings.google_api_key)
-
 DEFAULT_SHEET_ID = settings.default_sheet_id
 
 COMPANY_NAME_ROW = 1
@@ -520,8 +517,11 @@ def process_file(file_path: str) -> Dict[str, Any]:
 
 def process_files(
     file_paths: List[str],
-    sheet_id: str | None = DEFAULT_SHEET_ID,
+    sheet_id: str | None,
+    google_api_key: str,
+    gcp_service_account_json: str,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    genai.configure(api_key=google_api_key)
     data_by_index: Dict[int, Dict[str, Any]] = {}
     errors: List[str] = []
     total_files = len(file_paths)
@@ -541,7 +541,8 @@ def process_files(
 
     results: List[Dict[str, Any]] = []
     if data_by_index:
-        ws = authenticate_and_open_sheet(extract_sheet_id_from_url(sheet_id) or DEFAULT_SHEET_ID)
+        target_sheet_id = extract_sheet_id_from_url(sheet_id) or DEFAULT_SHEET_ID
+        ws = authenticate_and_open_sheet(target_sheet_id, gcp_service_account_json)
         initial_sheet_values = ws.get_all_values()
 
         live_existing_products: List[Dict[str, Any]] = []
