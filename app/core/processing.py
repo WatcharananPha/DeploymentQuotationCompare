@@ -490,9 +490,13 @@ def process_files(
     google_api_key: str,
     gcp_service_account_json: str,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+<<<<<<< HEAD
     
     genai.configure(api_key=google_api_key)
 
+=======
+    genai.configure(api_key=google_api_key)
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
     data_by_index: Dict[int, Dict[str, Any]] = {}
     errors: List[str] = []
     total_files = len(file_paths)

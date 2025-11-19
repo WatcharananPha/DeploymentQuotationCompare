@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import React, { useMemo, useState, useRef, useEffect } from "react";
 import axios from "axios";
 import {
@@ -26,6 +27,17 @@ import {
   LifeBuoy,
   KeyRound
 } from "lucide-react";
+=======
+import React, { useEffect, useMemo, useState } from "react";
+
+type View = "dashboard" | "processing" | "success" | "error";
+
+interface ApiResponse {
+  sheet_id: string;
+  results: any[];
+  errors: string[];
+}
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -95,10 +107,27 @@ const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState("");
   const [lastSheetId, setLastSheetId] = useState<string | null>(null);
   const [resultsCount, setResultsCount] = useState(0);
+<<<<<<< HEAD
   
   // Lazy init state from localStorage to avoid useEffect warning
   const [googleApiKey, setGoogleApiKey] = useState(() => localStorage.getItem("googleApiKey") || "");
   const [serviceAccountJson, setServiceAccountJson] = useState(() => localStorage.getItem("serviceAccountJson") || "");
+=======
+  const [googleApiKey, setGoogleApiKey] = useState("");
+  const [serviceAccountJson, setServiceAccountJson] = useState("");
+  const [credentialsStatus, setCredentialsStatus] = useState("");
+
+  useEffect(() => {
+    const storedApiKey = localStorage.getItem("googleApiKey");
+    const storedServiceJson = localStorage.getItem("serviceAccountJson");
+    if (storedApiKey) setGoogleApiKey(storedApiKey);
+    if (storedServiceJson) setServiceAccountJson(storedServiceJson);
+  }, []);
+
+  useEffect(() => {
+    setCredentialsStatus("");
+  }, [googleApiKey, serviceAccountJson]);
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -125,11 +154,23 @@ const App: React.FC = () => {
   // --- Actions ---
   const handleAddFiles = (fileList: FileList | null) => {
     if (!fileList) return;
+<<<<<<< HEAD
     const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/jpg"];
     const newFiles: File[] = [];
     Array.from(fileList).forEach((f) => {
       if (allowedTypes.includes(f.type) || /\.(pdf|jpg|jpeg|png)$/i.test(f.name)) {
         newFiles.push(f);
+=======
+    const allowedTypes = new Set(["application/pdf", "image/jpeg", "image/png"]);
+    const allowedExts = [".pdf", ".jpg", ".jpeg", ".png"];
+    const next: File[] = [];
+    Array.from(fileList).forEach((file) => {
+      const lowerName = file.name.toLowerCase();
+      const typeOk = allowedTypes.has(file.type);
+      const extOk = allowedExts.some((ext) => lowerName.endsWith(ext));
+      if (typeOk || extOk) {
+        next.push(file);
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
       }
     });
     if (newFiles.length) setFiles((prev) => [...prev, ...newFiles]);
@@ -142,6 +183,7 @@ const App: React.FC = () => {
   const handleSaveCredentials = () => {
     localStorage.setItem("googleApiKey", googleApiKey);
     localStorage.setItem("serviceAccountJson", serviceAccountJson);
+<<<<<<< HEAD
     // Redirect to dashboard after save
     setView("dashboard");
   };
@@ -165,10 +207,14 @@ const App: React.FC = () => {
         step += 1;
       }
     }, 1000);
+=======
+    setCredentialsStatus("Saved credentials");
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
   };
 
   const handleProcess = async () => {
     if (!files.length) return;
+<<<<<<< HEAD
     
     if (!googleApiKey.trim() || !serviceAccountJson.trim()) {
        const confirmSettings = window.confirm("API Keys not found. Go to Settings?");
@@ -176,6 +222,13 @@ const App: React.FC = () => {
        return;
     }
 
+=======
+    if (!googleApiKey.trim() || !serviceAccountJson.trim()) {
+      setErrorMessage("Please enter Google API Key and Service Account JSON before processing.");
+      setView("error");
+      return;
+    }
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
     setView("processing");
     setErrorMessage("");
     simulateProcessingAnimation(estimatedSec);
@@ -356,6 +409,7 @@ const App: React.FC = () => {
                     </div>
                   </header>
 
+<<<<<<< HEAD
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
                       {/* Link Input */}
@@ -372,6 +426,133 @@ const App: React.FC = () => {
                                 placeholder="https://docs.google.com/spreadsheets/d/..." 
                                 className="w-full focus:outline-none focus:ring-2 focus:ring-[#3B82F6] focus:border-[#3B82F6] placeholder-slate-400 transition text-sm text-slate-700 border-slate-200 border rounded-lg pt-2.5 pr-3 pb-2.5 pl-9" 
                               />
+=======
+                  {/* Sheet link */}
+                  <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5 space-y-4">
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium text-slate-700">API Credentials</div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            ใส่ Google API Key และ Service Account JSON เพื่อเชื่อมต่อ Gemini และ Google Sheet
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSaveCredentials}
+                          className="text-xs font-medium text-blue-700 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50"
+                        >
+                          Save
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">Google API Key</label>
+                        <input
+                          type="text"
+                          value={googleApiKey}
+                          onChange={(e) => setGoogleApiKey(e.target.value)}
+                          placeholder="AIza..."
+                          className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-slate-700">GCP Service Account JSON</label>
+                        <textarea
+                          value={serviceAccountJson}
+                          onChange={(e) => setServiceAccountJson(e.target.value)}
+                          placeholder={'{ "type": "service_account", ... }'}
+                          rows={6}
+                          className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      {credentialsStatus && (
+                        <div className="text-xs text-emerald-600">{credentialsStatus}</div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Google Sheet Link / ID
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={sheetLink}
+                          onChange={(e) => setSheetLink(e.target.value)}
+                          placeholder="https://docs.google.com/spreadsheets/d/..."
+                          className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        {sheetUrlResolved && (
+                          <button
+                            type="button"
+                            onClick={() => window.open(sheetUrlResolved, "_blank")}
+                            className="px-3 py-2 text-sm rounded-lg border border-blue-200 text-blue-900 hover:bg-blue-50"
+                          >
+                            Open
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Upload zone */}
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Upload quotations (PDF / Images)
+                      </label>
+                      <div
+                        className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center"
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          handleAddFiles(e.dataTransfer.files);
+                        }}
+                      >
+                        <p className="text-sm text-slate-700">
+                          Drag &amp; drop หรือ{" "}
+                          <label className="text-blue-700 underline cursor-pointer">
+                            browse
+                            <input
+                              type="file"
+                              multiple
+                              accept="application/pdf,image/jpeg,image/png"
+                              className="hidden"
+                              onChange={(e) => handleAddFiles(e.target.files)}
+                            />
+                          </label>
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Supported: PDF, JPG, JPEG, PNG
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* File list */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-sm font-medium text-slate-700">
+                          Uploaded Files
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {files.length} file{files.length !== 1 && "s"} •{" "}
+                          {bytesToSize(totalSize)}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {files.map((f, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5"
+                          >
+                            <div>
+                              <div className="text-sm font-medium text-slate-800">
+                                {f.name}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {bytesToSize(f.size)}
+                              </div>
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
                             </div>
                             <button 
                               onClick={() => window.open(sheetLink, "_blank")} 

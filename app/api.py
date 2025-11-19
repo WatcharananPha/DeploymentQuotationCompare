@@ -26,9 +26,19 @@ async def save_settings(google_api_key: str = Form(...), gcp_service_account_jso
 async def process_files_endpoint(
     files: List[UploadFile] = File(...),
     sheet_url: str = Form(""),
+    google_api_key: str = Form(...),
+    gcp_service_account_json: str = Form(...),
 ):
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
+<<<<<<< HEAD
+=======
+    if not google_api_key.strip():
+        raise HTTPException(status_code=400, detail="Missing Google API key")
+    if not gcp_service_account_json.strip():
+        raise HTTPException(status_code=400, detail="Missing service account JSON")
+
+>>>>>>> 759411f8df63217551d651388c87e0550fd3b293
     with tempfile.TemporaryDirectory() as temp_dir:
         file_paths = []
         for upload in files:
@@ -38,5 +48,11 @@ async def process_files_endpoint(
                 f.write(content)
             file_paths.append(dest)
         sheet_id = extract_sheet_id_from_url(sheet_url) or settings.default_sheet_id
-        results, errors = await run_in_threadpool(process_files, file_paths, sheet_id)
+        results, errors = await run_in_threadpool(
+            process_files,
+            file_paths,
+            sheet_id,
+            google_api_key.strip(),
+            gcp_service_account_json.strip(),
+        )
         return ProcessResponse(sheet_id=sheet_id, results=results, errors=errors)
