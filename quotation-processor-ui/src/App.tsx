@@ -117,10 +117,12 @@ const App: React.FC = () => {
 
   // Derived
   const totalSize = useMemo(() => files.reduce((acc, f) => acc + f.size, 0), [files]);
+  
+  // --- แก้ไขส่วนการคำนวณเวลา (Estimated Time) ---
   const estimatedSec = useMemo(() => {
-    const mb = totalSize / (1024 * 1024);
-    return Math.min(120, Math.max(3, Math.round(3 + mb * 0.6)));
-  }, [totalSize]);
+    // คำนวณเวลาโดยเฉลี่ยไฟล์ละ 180 วินาที
+    return files.length * 180;
+  }, [files.length]);
 
   // --- Actions ---
   const handleAddFiles = (fileList: FileList | null) => {
@@ -539,7 +541,7 @@ const App: React.FC = () => {
                               onChange={(e) => setServiceAccountJson(e.target.value)} 
                               rows={6} 
                               placeholder='{ "type": "service_account", ... }' 
-                              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#3B82F6] focus:border-[#3B82F6] text-sm text-slate-700 placeholder-slate-400 transition font-mono" 
+                              className="w-full px-3 py-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-[#3B82F6] focus:border-[#3B82F6] text-sm text-slate-700 placeholder-slate-400 transition font-mono resize-y" 
                             />
                           </div>
                        </div>
@@ -615,13 +617,12 @@ const App: React.FC = () => {
                      </div>
                      <div>
                        <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">Processing Complete</h2>
-                       <p className="text-sm text-slate-500 mt-1">Your Excel file is ready.</p>
+                       <p className="text-sm text-slate-500 mt-1">Processed {resultsCount} files successfully.</p>
                      </div>
                      <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
                        <button 
                           className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-medium text-white bg-gradient-to-tr from-[#3B82F6] to-[#1E3A8A] shadow-md hover:shadow-lg hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#3B82F6] transition"
                           onClick={() => {
-                            // Mock download logic
                             alert("Download logic here");
                           }}
                        >
