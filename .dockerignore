@@ -1,0 +1,37 @@
+# --- Version Control ---
+.git
+.gitignore
+
+# --- Python (Backend) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv
+venv/
+env/
+.env
+
+# --- Node.js / React (Frontend) ---
+quotation-processor-ui/node_modules/
+quotation-processor-ui/dist/
+quotation-processor-ui/build/
+quotation-processor-ui/.env
+quotation-processor-ui/.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- IDE & OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Docker specific ---
+Dockerfile
+docker-compose.yml
+README.md
