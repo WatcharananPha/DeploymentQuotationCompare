@@ -87,7 +87,6 @@ function iconForFile(name: string, type: string) {
 
 // --- Main Component ---
 const App: React.FC = () => {
-  // State
   const [view, setView] = useState<View>("dashboard");
   const [files, setFiles] = useState<File[]>([]);
   const [sheetLink, setSheetLink] = useState("https://docs.google.com/spreadsheets/d/17tMHStXQYXaIQHQIA4jdUyHaYt_tuoNCEEuJCstWEuw/edit?gid=553601935#gid=553601935");
@@ -96,7 +95,6 @@ const App: React.FC = () => {
   const [lastSheetId, setLastSheetId] = useState<string | null>(null);
   const [resultsCount, setResultsCount] = useState(0);
   
-  // Lazy init state from localStorage to avoid useEffect warning
   const [googleApiKey, setGoogleApiKey] = useState(() => localStorage.getItem("googleApiKey") || "");
   const [serviceAccountJson, setServiceAccountJson] = useState(() => localStorage.getItem("serviceAccountJson") || "");
 
@@ -108,23 +106,17 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<number | null>(null);
 
-  // Cleanup timer
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  // Derived
   const totalSize = useMemo(() => files.reduce((acc, f) => acc + f.size, 0), [files]);
-  
-  // --- แก้ไขส่วนการคำนวณเวลา (Estimated Time) ---
   const estimatedSec = useMemo(() => {
-    // คำนวณเวลาโดยเฉลี่ยไฟล์ละ 180 วินาที
     return files.length * 180;
   }, [files.length]);
 
-  // --- Actions ---
   const handleAddFiles = (fileList: FileList | null) => {
     if (!fileList) return;
     const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/jpg"];
@@ -144,7 +136,6 @@ const App: React.FC = () => {
   const handleSaveCredentials = () => {
     localStorage.setItem("googleApiKey", googleApiKey);
     localStorage.setItem("serviceAccountJson", serviceAccountJson);
-    // Redirect to dashboard after save
     setView("dashboard");
   };
 
@@ -191,8 +182,10 @@ const App: React.FC = () => {
     files.forEach((f) => formData.append("files", f));
 
     try {
+      // FIX: เพิ่ม timeout ให้ Axios (0 = no timeout) เพื่อป้องกัน Client ตัด connection ก่อน Backend เสร็จ
       const res = await axios.post(`${API_BASE_URL}/api/process-files`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 0, 
       });
 
       const data = res.data as ApiResponse;
@@ -204,14 +197,21 @@ const App: React.FC = () => {
       }
       
       if (timerRef.current) clearInterval(timerRef.current);
-      setStepIndex(4); // Complete all steps
+      setStepIndex(4); 
       setView("success");
 
     } catch (err: unknown) {
       if (timerRef.current) clearInterval(timerRef.current);
       let msg = "Unknown error";
-      if (axios.isAxiosError(err) && err.response?.data?.detail) {
-        msg = err.response.data.detail;
+      
+      if (axios.isAxiosError(err)) {
+         if (err.code === 'ECONNABORTED') {
+             msg = "Request timed out. The server is taking too long to respond.";
+         } else if (err.response?.data?.detail) {
+             msg = err.response.data.detail;
+         } else {
+             msg = err.message;
+         }
       } else if (err instanceof Error) {
         msg = err.message;
       }
@@ -236,7 +236,6 @@ const App: React.FC = () => {
     return `https://docs.google.com/spreadsheets/d/${lastSheetId}`;
   }, [lastSheetId, sheetLink]);
 
-  // Drag handlers
   const onDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(true);
@@ -256,7 +255,6 @@ const App: React.FC = () => {
       <div className="w-screen h-screen">
         <div className="relative bg-white w-full h-full overflow-hidden flex flex-col">
           
-          {/* Header */}
           <div className="h-12 flex sm:px-6 bg-white/70 border-slate-200 border-b pr-4 pl-4 backdrop-blur-sm items-center justify-between z-20">
             <div className="flex items-center gap-2">
                <div className="hidden sm:flex items-center gap-2 text-sm text-slate-500">
@@ -275,7 +273,6 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex-1 flex overflow-hidden relative">
-            {/* Desktop Sidebar */}
             <aside className="w-64 shrink-0 hidden sm:flex flex-col transition-all duration-300 bg-slate-50 border-slate-200 border-r">
                <div className="p-3">
                  <div className="px-2 py-2 text-xs font-medium text-slate-500">MAIN</div>
@@ -310,7 +307,6 @@ const App: React.FC = () => {
                </div>
             </aside>
 
-            {/* Mobile Sidebar Overlay */}
             {mobileOpen && (
               <div className="fixed inset-0 z-40 sm:hidden">
                 <div className="absolute inset-0 bg-slate-900/40" onClick={() => setMobileOpen(false)}></div>
@@ -335,10 +331,8 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* Main Content */}
             <main className="flex-1 overflow-y-auto">
               
-              {/* DASHBOARD VIEW */}
               {view === "dashboard" && (
                 <section className="sm:p-6 pt-4 pr-4 pb-4 pl-4 space-y-6 animate-in fade-in slide-in-from-bottom-1 duration-500">
                   <header className="flex items-center justify-between">
@@ -360,7 +354,6 @@ const App: React.FC = () => {
 
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
-                      {/* Link Input */}
                       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
                         <div className="p-4 sm:p-5">
                           <label className="block text-sm font-medium text-slate-700 mb-2">Google Sheet Link / Excel Sheet</label>
@@ -386,7 +379,6 @@ const App: React.FC = () => {
                         </div>
                         <div className="border-t border-slate-200"></div>
 
-                        {/* Dropzone */}
                         <div className="p-4 sm:p-5">
                            <div 
                              className={`relative rounded-xl border-2 border-dashed transition p-6 sm:p-8 text-center group cursor-pointer ${isDragOver ? 'border-[#3B82F6] bg-blue-50/50' : 'border-slate-300 hover:border-[#3B82F6] hover:bg-slate-50'}`}
@@ -418,7 +410,6 @@ const App: React.FC = () => {
                            </div>
                         </div>
 
-                        {/* File List */}
                         <div className="px-4 sm:p-5 pt-0">
                            <div className="flex items-center justify-between mb-3">
                              <div className="text-sm font-medium text-slate-700">Uploaded Files</div>
@@ -445,7 +436,6 @@ const App: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Output Format */}
                       <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5">
                         <div className="flex items-center justify-between mb-3">
                            <div className="text-sm font-medium text-slate-700">Output</div>
@@ -464,7 +454,6 @@ const App: React.FC = () => {
                         </div>
                       </div>
                       
-                      {/* Process Button */}
                       <div className="flex justify-end">
                          <button 
                            onClick={handleProcess} 
@@ -476,7 +465,6 @@ const App: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Sidebar Summary */}
                     <aside className="lg:col-span-1">
                       <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5 sticky top-4">
                          <div className="flex items-center gap-2 mb-3">
@@ -510,7 +498,6 @@ const App: React.FC = () => {
                 </section>
               )}
 
-              {/* SETTINGS VIEW */}
               {view === "settings" && (
                 <section className="p-4 sm:p-6 space-y-6 animate-in fade-in slide-in-from-bottom-1 duration-500">
                   <header>
@@ -559,7 +546,6 @@ const App: React.FC = () => {
                 </section>
               )}
 
-              {/* PROCESSING VIEW */}
               {view === "processing" && (
                 <section className="p-6 h-full flex flex-col items-center justify-center text-center animate-in fade-in">
                   <div className="space-y-6">
@@ -600,7 +586,6 @@ const App: React.FC = () => {
                 </section>
               )}
 
-              {/* SUCCESS VIEW */}
               {view === "success" && (
                 <section className="p-6 h-full flex flex-col items-center justify-center text-center relative animate-in zoom-in-95 duration-300">
                   {/* Background Effects */}
@@ -642,7 +627,6 @@ const App: React.FC = () => {
                 </section>
               )}
 
-              {/* ERROR VIEW */}
               {view === "error" && (
                 <section className="p-6 h-full flex flex-col items-center justify-center text-center animate-in fade-in">
                    <div className="space-y-5 max-w-lg">
