@@ -1,17 +1,15 @@
-# --- Stage 1: Build Frontend (React) ---
 FROM node:20-alpine AS frontend-build
 WORKDIR /frontend
 
-# Copy package files & install dependencies
 COPY quotation-processor-ui/package.json quotation-processor-ui/package-lock.json ./
 RUN npm install
 
-# Copy source code & build
 COPY quotation-processor-ui ./
-# ปรับแต่งให้ build ออกมาเป็น production files
+
+ENV VITE_API_BASE_URL="." 
+
 RUN npm run build
 
-# --- Stage 2: Build Backend (FastAPI) & Serve ---
 FROM python:3.11-slim
 
 # ป้องกัน Python สร้างไฟล์ .pyc และ buffer stdout
