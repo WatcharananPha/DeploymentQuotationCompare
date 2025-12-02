@@ -107,10 +107,22 @@ const App: React.FC = () => {
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
+      let interval: number;
+      if (view === "processing" && processingRemaining > 0) {
+        interval = window.setInterval(() => {
+          setProcessingRemaining((prev) => {
+            // ถ้าลดเหลือ 0 แล้วให้ค้างไว้ที่ 0
+            if (prev <= 1) return 0;
+            return prev - 1;
+          });
+          
+          setStepIndex((prev) => {
+            return prev; 
+          });
+        }, 1000);
+      }
+      return () => clearInterval(interval);
+    }, [view, processingRemaining]);
 
   const totalSize = useMemo(() => files.reduce((acc, f) => acc + f.size, 0), [files]);
   const estimatedSec = useMemo(() => {
@@ -139,27 +151,6 @@ const App: React.FC = () => {
     setView("dashboard");
   };
 
-  const simulateProcessingAnimation = (totalSec: number) => {
-    setProcessingRemaining(totalSec);
-    setStepIndex(0);
-    let elapsed = 0;
-    let step = 0;
-    const stepPoints = [0, Math.floor(totalSec / 3), Math.floor((2 * totalSec) / 3), totalSec - 1];
-
-    if (timerRef.current) clearInterval(timerRef.current);
-    
-    timerRef.current = window.setInterval(() => {
-      elapsed += 1;
-      const remaining = Math.max(0, totalSec - elapsed);
-      setProcessingRemaining(remaining);
-      
-      if (step < stepPoints.length && elapsed - 1 === stepPoints[step]) {
-        setStepIndex(step);
-        step += 1;
-      }
-    }, 1000);
-  };
-
   const handleProcess = async () => {
     if (!files.length) return;
     
@@ -171,7 +162,9 @@ const App: React.FC = () => {
 
     setView("processing");
     setErrorMessage("");
-    simulateProcessingAnimation(estimatedSec);
+    
+    // Set initial remaining time for UI display
+    setProcessingRemaining(estimatedSec);
 
     const formData = new FormData();
     formData.append("sheet_url", sheetLink || "");
@@ -182,32 +175,55 @@ const App: React.FC = () => {
     files.forEach((f) => formData.append("files", f));
 
     try {
-      // FIX: เพิ่ม timeout ให้ Axios (0 = no timeout) เพื่อป้องกัน Client ตัด connection ก่อน Backend เสร็จ
-      const res = await axios.post(`${API_BASE_URL}/api/process-files`, formData, {
+      // 1. ยื่นเรื่อง (Submit Job) และรับ Job ID ทันที
+      const submitRes = await axios.post(`${API_BASE_URL}/api/process-files-async`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: 0, 
       });
 
-      const data = res.data as ApiResponse;
-      setLastSheetId(data.sheet_id);
-      setResultsCount(data.results.length);
+      const { job_id } = submitRes.data;
 
-      if (data.errors && data.errors.length) {
-        setErrorMessage(data.errors.join("\n"));
-      }
-      
+      // 2. เริ่มวน Loop เช็คสถานะ (Polling) ทุก 3 วินาที
       if (timerRef.current) clearInterval(timerRef.current);
-      setStepIndex(4); 
-      setView("success");
+      
+      timerRef.current = window.setInterval(async () => {
+          try {
+              const statusRes = await axios.get(`${API_BASE_URL}/api/jobs/${job_id}`);
+              const { status, result, error } = statusRes.data;
+
+              if (status === "completed") {
+                  // ทำงานเสร็จแล้ว
+                  if (timerRef.current) clearInterval(timerRef.current);
+                  
+                  const data = result as ApiResponse;
+                  setLastSheetId(data.sheet_id);
+                  setResultsCount(data.results.length);
+
+                  if (data.errors && data.errors.length) {
+                    setErrorMessage(data.errors.join("\n"));
+                  }
+                  
+                  setStepIndex(4); 
+                  setView("success");
+              } else if (status === "failed") {
+                  // ทำงานล้มเหลว
+                  if (timerRef.current) clearInterval(timerRef.current);
+                  setErrorMessage(error || "Unknown error occurred during background processing.");
+                  setView("error");
+              } else {
+                  // กำลังทำงาน (status === "processing")
+                  console.log(`Job ${job_id} is processing...`);
+              }
+          } catch (pollErr) {
+              console.error("Polling error:", pollErr);
+          }
+      }, 3000);
 
     } catch (err: unknown) {
       if (timerRef.current) clearInterval(timerRef.current);
       let msg = "Unknown error";
       
       if (axios.isAxiosError(err)) {
-         if (err.code === 'ECONNABORTED') {
-             msg = "Request timed out. The server is taking too long to respond.";
-         } else if (err.response?.data?.detail) {
+         if (err.response?.data?.detail) {
              msg = err.response.data.detail;
          } else {
              msg = err.message;
