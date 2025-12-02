@@ -564,12 +564,10 @@ def process_files(
         for i, idx in enumerate(sorted(data_by_index.keys())):
             r = data_by_index[idx]
             if r and "data" in r and r["data"]:
-                # ตาม flow เดิม: อัปเดต sheet ทีละไฟล์
                 live_existing_products, live_existing_suppliers = update_google_sheet_for_single_file(
                     ws, r["data"], live_existing_products, live_existing_suppliers
                 )
                 results.append(r["data"])
-                time.sleep(0.5)  # คง delay 0.5s เดิมไว้
 
     return results, errors
 
