@@ -1,4 +1,3 @@
-# app/core/processing.py
 from __future__ import annotations
 
 import concurrent.futures
@@ -61,22 +60,22 @@ def extract_json_from_text(text: str | None) -> Dict[str, Any] | None:
         start = text.find("{")
         end = text.rfind("}") + 1
         candidates = [text[start:end]] if start >= 0 and end > start else []
-
     for cand in candidates:
         json_str = cand
         cleaned_json = re.sub(r",\s*}", "}", json_str)
         cleaned_json = re.sub(r",\s*]", "]", cleaned_json)
-        try:
-            return json.loads(cleaned_json)
-        except json.JSONDecodeError:
-            continue
+        return json.loads(cleaned_json)
     return None
 
 
 def extract_contact_info(text: str | None) -> str:
     if not text:
         return ""
-    phone_pattern = r"(?<!\w)((0\d{1,2}[-\s]?\d{3}[-\s]?\d{3,4})|(0\d{2}[-\s]?\d{7})|(0\d{2}[-\s]?\d{3}[-\s]?\d{4}))(?!\w)"
+    phone_pattern = (
+        r"(?<!\w)((0\d{1,2}[-\s]?\d{3}[-\s]?\d{3,4})|"
+        r"(0\d{2}[-\s]?\d{7})|"
+        r"(0\d{2}[-\s]?\d{3}[-\s]?\d{4}))(?!\w)"
+    )
     email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
     phone_matches = re.findall(phone_pattern, text)
     email_matches = re.findall(email_pattern, text)
@@ -205,18 +204,10 @@ def match_products_with_gemini(
     if not reference_products:
         return {"matchedItems": [], "uniqueItems": target_products}
 
-    try:
-        match_prompt_formatted = matching_prompt.format(
-            target_products=json.dumps(target_products, ensure_ascii=False),
-            reference_products=json.dumps(reference_products, ensure_ascii=False),
-        )
-    except KeyError:
-        # กรณี prompt template ผิด – fallback ให้ยังวิ่งต่อ
-        match_prompt_formatted = matching_prompt.replace("{matchedItems}", "").replace("{uniqueItems}", "")
-        match_prompt_formatted = match_prompt_formatted.format(
-            target_products=json.dumps(target_products, ensure_ascii=False),
-            reference_products=json.dumps(reference_products, ensure_ascii=False),
-        )
+    match_prompt_formatted = matching_prompt.format(
+        target_products=json.dumps(target_products, ensure_ascii=False),
+        reference_products=json.dumps(reference_products, ensure_ascii=False),
+    )
 
     model = genai.GenerativeModel(
         model_name="gemini-2.5-pro",
@@ -231,10 +222,7 @@ def match_products_with_gemini(
         start = match_text.find("{")
         end = match_text.rfind("}") + 1
         if start >= 0 and end > start:
-            try:
-                match_data = json.loads(match_text[start:end])
-            except Exception:
-                match_data = None
+            match_data = json.loads(match_text[start:end])
 
     if not match_data or not isinstance(match_data, dict):
         return {"matchedItems": [], "uniqueItems": target_products}
@@ -245,8 +233,26 @@ def match_products_with_gemini(
     return match_data
 
 
+def _get_all_values(ws) -> List[List[Any]]:
+    if hasattr(ws, "get_all_values"):
+        return ws.get_all_values()
+    max_row = ws.max_row
+    max_col = ws.max_column
+    values: List[List[Any]] = []
+    for row_idx in range(1, max_row + 1):
+        row: List[Any] = []
+        for col_idx in range(1, max_col + 1):
+            row.append(ws.cell(row=row_idx, column=col_idx).value)
+        while row and (row[-1] is None or str(row[-1]).strip() == ""):
+            row.pop()
+        values.append(row)
+    while values and not any(str(c).strip() for c in values[-1]):
+        values.pop()
+    return values
+
+
 def _last_non_empty_col_in_top_rows(ws) -> int:
-    vals = ws.get_all_values()
+    vals = _get_all_values(ws)
     last = ITEM_MASTER_LIST_COL
     for row in vals[:HEADER_ROW]:
         for i, c in enumerate(row, start=1):
@@ -263,6 +269,51 @@ def find_next_available_column(ws) -> int:
     offset = last_used - start_col + 1
     groups_used = (offset + COLUMNS_PER_SUPPLIER - 1) // COLUMNS_PER_SUPPLIER
     return start_col + groups_used * COLUMNS_PER_SUPPLIER
+
+
+def _is_google_sheet(ws) -> bool:
+    return hasattr(ws, "batch_update")
+
+
+def _insert_blank_rows(ws, count: int, index: int) -> None:
+    if _is_google_sheet(ws):
+        ws.insert_rows([[""] * ws.col_count for _ in range(count)], index)
+    else:
+        ws.insert_rows(idx=index, amount=count)
+
+
+def _a1_to_rowcol(a1: str) -> Tuple[int, int]:
+    m = re.match(r"([A-Z]+)(\d+)", a1)
+    if not m:
+        return 1, 1
+    col_letters, row_str = m.groups()
+    row = int(row_str)
+    col = 0
+    for ch in col_letters:
+        col = col * 26 + (ord(ch) - 64)
+    return row, col
+
+
+def _batch_update(ws, batch_requests: List[Dict[str, Any]]) -> None:
+    if _is_google_sheet(ws):
+        ws.batch_update(batch_requests, value_input_option="USER_ENTERED")
+        return
+    for request in batch_requests:
+        range_str = request["range"]
+        values = request["values"]
+        if ":" in range_str:
+            start_a1, end_a1 = range_str.split(":")
+        else:
+            start_a1 = range_str
+            end_a1 = range_str
+        start_row, start_col = _a1_to_rowcol(start_a1)
+        end_row, end_col = _a1_to_rowcol(end_a1)
+        row_count = end_row - start_row + 1
+        col_count = end_col - start_col + 1
+        for r in range(row_count):
+            for c in range(col_count):
+                v = values[r][c]
+                ws.cell(row=start_row + r, column=start_col + c, value=v)
 
 
 def update_google_sheet_for_single_file(
@@ -369,7 +420,7 @@ def update_google_sheet_for_single_file(
                 final_new_products.append(item)
 
         if final_new_products:
-            ws.insert_rows([[""] * ws.col_count for _ in final_new_products], insertion_row)
+            _insert_blank_rows(ws, len(final_new_products), insertion_row)
             for i, product in enumerate(final_new_products):
                 row = insertion_row + i
                 product_name = clean_product_name(product.get("name", "Unknown Product"))
@@ -436,7 +487,7 @@ def update_google_sheet_for_single_file(
             )
 
     if batch_requests:
-        ws.batch_update(batch_requests, value_input_option="USER_ENTERED")
+        _batch_update(ws, batch_requests)
 
     return existing_products, existing_suppliers
 
@@ -446,12 +497,12 @@ def get_file_type(file_path: str) -> str:
     if mime_type:
         if mime_type.startswith("image/"):
             return "image"
-        elif mime_type == "application/pdf":
+        if mime_type == "application/pdf":
             return "pdf"
     ext = os.path.splitext(file_path)[1].lower()
     if ext in [".jpg", ".jpeg", ".png"]:
         return "image"
-    elif ext == ".pdf":
+    if ext == ".pdf":
         return "pdf"
     return "unknown"
 
@@ -533,11 +584,8 @@ def process_files(
         future_to_index = {executor.submit(process_file, path): idx for idx, path in enumerate(file_paths)}
         for future in concurrent.futures.as_completed(future_to_index):
             idx = future_to_index[future]
-            try:
-                result = future.result()
-                data_by_index[idx] = result
-            except Exception as exc:
-                errors.append(f"Failed to process file index {idx}: {exc!r}")
+            result = future.result()
+            data_by_index[idx] = result
 
     results: List[Dict[str, Any]] = []
     if data_by_index:
@@ -570,6 +618,7 @@ def process_files(
                 results.append(r["data"])
 
     return results, errors
+
 
 prompt = """# System Message for Product List Extraction (PDF/Text Table Processing)
 ## CRITICAL: ANTI-HALLUCINATION WARNING
@@ -832,53 +881,6 @@ Review the extracted products one last time and verify:
 5. Confirm all dimensions and specifications are preserved correctly
 6. Verify all decimal values (quantities and prices) maintain their full precision
 """
-
-# validation_prompt = """
-# You are a data validation expert specializing in Thai construction quotations.
-# I've extracted product data from a document, but there may be missing products or hierarchical relationships.
-
-# ## CRITICAL: COMPLETE DATA CHECK
-# Your primary task is to ensure ALL products are correctly extracted with their hierarchical structure:
-# 1. Check that all products visible in the document have been extracted
-# 2. Ensure parent-child relationships and category groupings are preserved
-# 3. Verify that all products have complete descriptions including their category name
-# 4. Make sure no products are missing dimensions or specifications
-
-# ## CRITICAL: PRESERVE PRODUCT HIERARCHY
-# Thai construction quotations often organize products hierarchically by categories:
-# - Category names with descriptive details
-# - Materials and specifications
-# - Dimensions
-
-# Each product must include its complete hierarchy:
-# "[Category Name] - [Material] - [Type] - [Dimensions]"
-
-# Examples (DO NOT add data from the attached Example in the prompt): 
-# - "งานบันไดกระจก งานพื้นตก - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - กระจกเทมเปอร์ใส หนา 10 มม. ขนาด 4.672×0.97 ม."
-# - "งานพื้นตก (ชั้นลอย) - เหล็กตัวซีชุบสังกะสี ไม่รวมปูน - เทมเปอร์ใส หนา 10 มม. ขนาด 3.565×0.97 ม."
-
-# ## CRITICAL: DECIMAL NUMBER ACCURACY
-# Pay special attention to:
-# 1. Quantities with decimals (extract full precision)
-# 2. Dimensions with decimals (preserve exact measurements)
-# 3. Prices with decimals (maintain exact values)
-
-# ## CRITICAL: CLEAN PRODUCT DESCRIPTIONS
-# 1. REMOVE any leading numbers (1., 2., 3., etc.) from product descriptions
-# 2. Ensure NO product descriptions begin with numbering
-# 3. Maintain all other hierarchical information and details
-
-# Review the data carefully and FIX these issues:
-# 1. ADD any missing products that should be extracted from the source document
-# 2. FIX product names to include complete hierarchical information WITHOUT leading numbers
-# 3. ENSURE all dimensions and specifications are preserved with full decimal precision
-# 4. VERIFY every product has the correct quantity, unit, price and total with full decimal precision
-
-# Original extraction:
-# {extracted_json}
-
-# Return ONLY a valid JSON object with no explanations.
-# """
 
 matching_prompt = """
 You are a meticulous data architect specializing in product ontology for construction and home appliance materials. Your primary mission is to analyze product lists from different suppliers, establish a single "canonical" master product name for each item, and then map all supplier variations to that canonical name.

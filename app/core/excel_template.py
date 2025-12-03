@@ -1,84 +1,126 @@
 # app/core/excel_template.py
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
-import tempfile
 
-from openpyxl import load_workbook, Workbook
+from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
 
-BASE_DIR = Path(__file__).resolve().parent.parent  # app/core -> app
-TEMPLATES_DIR = BASE_DIR / "templates"
-TEMPLATE_PATH = TEMPLATES_DIR / "quotation_template.xlsx"
+from .processing import (
+    COMPANY_NAME_ROW,
+    CONTACT_INFO_ROW,
+    HEADER_ROW,
+    ITEM_MASTER_LIST_COL,
+    COLUMNS_PER_SUPPLIER,
+    SUMMARY_LABELS,
+    update_google_sheet_for_single_file,
+)
 
 
-def _ensure_template_workbook():
-    if TEMPLATE_PATH.exists():
-        wb = load_workbook(TEMPLATE_PATH)
-        ws = wb.active
-    else:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Sheet1"
-    return wb, ws
+class ExcelWorksheetAdapter:
+    def __init__(self, ws):
+        self.ws = ws
+
+    @property
+    def col_count(self) -> int:
+        return self.ws.max_column
+
+    def get_all_values(self) -> List[List[str]]:
+        max_row = self.ws.max_row
+        max_col = self.ws.max_column
+        values: List[List[str]] = []
+        for r in range(1, max_row + 1):
+            row_vals: List[str] = []
+            for c in range(1, max_col + 1):
+                v = self.ws.cell(row=r, column=c).value
+                row_vals.append("" if v is None else str(v))
+            values.append(row_vals)
+        return values
+
+    def insert_rows(self, rows: List[List[Any]], row_index: int) -> None:
+        count = len(rows)
+        for i in range(count):
+            self.ws.insert_rows(row_index + i)
+
+    def batch_update(self, batch_requests: List[Dict[str, Any]], value_input_option: str = "USER_ENTERED") -> None:
+        for req in batch_requests:
+            rng = req["range"]
+            vals = req["values"]
+            if ":" in rng:
+                start_ref, end_ref = rng.split(":")
+            else:
+                start_ref = rng
+                end_ref = rng
+
+            start_col_letters = "".join(ch for ch in start_ref if ch.isalpha())
+            start_row_digits = "".join(ch for ch in start_ref if ch.isdigit())
+            end_col_letters = "".join(ch for ch in end_ref if ch.isalpha())
+            end_row_digits = "".join(ch for ch in end_ref if ch.isdigit())
+
+            start_col = column_index_from_string(start_col_letters)
+            start_row = int(start_row_digits)
+            end_col = column_index_from_string(end_col_letters)
+            end_row = int(end_row_digits)
+
+            for r_offset, row_vals in enumerate(vals):
+                row_idx = start_row + r_offset
+                if row_idx > end_row:
+                    break
+                for c_offset, value in enumerate(row_vals):
+                    col_idx = start_col + c_offset
+                    if col_idx > end_col:
+                        break
+                    self.ws.cell(row=row_idx, column=col_idx).value = value
+
+
+def _resolve_template_path() -> Path:
+    base_dir = Path(__file__).resolve().parent.parent
+    templates_dir = base_dir / "templates"
+    root_dir = base_dir.parent
+    candidates = [
+        templates_dir / "quotation_template.xlsx",
+        templates_dir / "temp.xlsx",
+        root_dir / "quotation_template.xlsx",
+        root_dir / "temp.xlsx",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return root_dir / "temp.xlsx"
 
 
 def generate_excel_from_results(results: List[Dict[str, Any]]) -> str:
-    """
-    รับผลลัพธ์ที่ได้จาก process_files แล้ว generate เป็นไฟล์ Excel
-    โดยใช้ template เดิม (quotation_template.xlsx) ถ้ามี
-    return เป็น path ของ temp .xlsx ที่พร้อมให้ส่งให้ client ดาวน์โหลด
-    """
-    wb, ws = _ensure_template_workbook()
+    template_path = _resolve_template_path()
+    wb = load_workbook(template_path)
+    ws = wb.active
+    adapter = ExcelWorksheetAdapter(ws)
 
-    current_row = 1
+    initial_sheet_values = adapter.get_all_values()
 
-    for idx, item in enumerate(results, start=1):
-        # results อาจเป็น list ของ data ตรง ๆ หรือเป็น {file_name, data}
-        data = item.get("data") if isinstance(item, dict) and "data" in item else item
-        if not data:
-            continue
+    live_existing_products: List[Dict[str, Any]] = []
+    for row_idx, row in enumerate(initial_sheet_values[HEADER_ROW:], start=HEADER_ROW + 1):
+        if len(row) >= ITEM_MASTER_LIST_COL:
+            name = row[ITEM_MASTER_LIST_COL - 1].strip()
+            if name and name not in SUMMARY_LABELS:
+                live_existing_products.append({"name": name, "row": row_idx})
 
-        company = data.get("company", "")
-        contact = data.get("contact", "")
-        total_price = data.get("totalPrice", 0)
-        total_vat = data.get("totalVat", 0)
-        total_inc_vat = data.get("totalPriceIncludeVat", 0)
-        products = data.get("products", []) or []
+    live_existing_suppliers: Dict[str, int] = {}
+    header_row_values = initial_sheet_values[COMPANY_NAME_ROW - 1] if initial_sheet_values else []
+    for col_idx in range(ITEM_MASTER_LIST_COL + 1, len(header_row_values) + 1, COLUMNS_PER_SUPPLIER):
+        supplier_name = header_row_values[col_idx - 1].strip() if (col_idx - 1) < len(header_row_values) else ""
+        if supplier_name:
+            live_existing_suppliers[supplier_name] = col_idx
 
-        ws.cell(row=current_row, column=1, value=f"Supplier {idx}")
-        ws.cell(row=current_row, column=2, value=company)
-        current_row += 1
+    for data in results:
+        if data:
+            live_existing_products, live_existing_suppliers = update_google_sheet_for_single_file(
+                adapter, data, live_existing_products, live_existing_suppliers
+            )
 
-        ws.cell(row=current_row, column=1, value="Contact")
-        ws.cell(row=current_row, column=2, value=contact)
-        current_row += 1
-
-        ws.cell(row=current_row, column=1, value="รวมเป็นเงิน")
-        ws.cell(row=current_row, column=2, value=total_price)
-        ws.cell(row=current_row, column=3, value=total_vat)
-        ws.cell(row=current_row, column=4, value=total_inc_vat)
-        current_row += 2
-
-        # header products
-        ws.cell(row=current_row, column=1, value="รายการ")
-        ws.cell(row=current_row, column=2, value="จำนวน")
-        ws.cell(row=current_row, column=3, value="หน่วย")
-        ws.cell(row=current_row, column=4, value="ราคาต่อหน่วย")
-        ws.cell(row=current_row, column=5, value="รวมเป็นเงิน")
-        current_row += 1
-
-        for p in products:
-            ws.cell(row=current_row, column=1, value=p.get("name"))
-            ws.cell(row=current_row, column=2, value=p.get("quantity"))
-            ws.cell(row=current_row, column=3, value=p.get("unit"))
-            ws.cell(row=current_row, column=4, value=p.get("pricePerUnit"))
-            ws.cell(row=current_row, column=5, value=p.get("totalPrice"))
-            current_row += 1
-
-        current_row += 2  # เว้นบรรทัดคั่น supplier ถัดไป
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-    wb.save(tmp.name)
-    tmp.close()
-    return tmp.name
+    fd, output_path = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    wb.save(output_path)
+    return output_path
