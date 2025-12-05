@@ -19,7 +19,6 @@ from .processing import (
     update_google_sheet_for_single_file,
 )
 
-
 class ExcelWorksheetAdapter:
     def __init__(self, ws):
         self.ws = ws
@@ -75,7 +74,6 @@ class ExcelWorksheetAdapter:
                         break
                     self.ws.cell(row=row_idx, column=col_idx).value = value
 
-
 def _resolve_template_path() -> Path:
     base_dir = Path(__file__).resolve().parent.parent
     templates_dir = base_dir / "templates"
@@ -90,7 +88,6 @@ def _resolve_template_path() -> Path:
         if path.exists():
             return path
     return root_dir / "temp.xlsx"
-
 
 def generate_excel_from_results(results: List[Dict[str, Any]]) -> str:
     template_path = _resolve_template_path()
