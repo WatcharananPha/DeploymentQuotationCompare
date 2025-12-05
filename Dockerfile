@@ -27,7 +27,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000
 
-WORKDIR /app
+WORKDIR /app    
 
 # Install System Dependencies (Optional but good for some python libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
